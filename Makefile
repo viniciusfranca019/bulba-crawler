@@ -1,4 +1,4 @@
-.PHONY: help install-all test lint format crawl dump
+.PHONY: help install-all test lint format crawl dump clean
 
 
 help: ## Mostrar esta mensagem de ajuda
@@ -9,6 +9,9 @@ install-all: ## Install all dependency groups (production + dev)
 	@echo "📦 Installing all dependencies (production + dev)..."
 	uv sync --all-groups
 	@echo "✅ All dependencies installed successfully!"
+
+clean: ## Remove the SQLite database file
+	rm -f crawl.db
 
 crawl: ## Crawl Bulbapedia Pokémon pages and store results in SQLite
 	uv run python main.py crawl
