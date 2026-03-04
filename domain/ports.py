@@ -63,6 +63,13 @@ class UrlRepository(ABC):
         """Mark *url* as failed with a human-readable *reason*."""
 
     @abstractmethod
+    async def reset_failed(self) -> list[str]:
+        """Reset all FAILED URLs back to PENDING so they are retried on re-run.
+
+        Returns the list of URLs that were reset.
+        """
+
+    @abstractmethod
     async def close(self) -> None:
         """Release underlying resources."""
 

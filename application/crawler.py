@@ -83,7 +83,14 @@ class CrawlerService:
 
     async def _produce(self, seed_urls: list[str]) -> int:
         """Insert new URLs into the DB and enqueue them. Returns count enqueued."""
-        count = 0
+        # Re-enqueue any URLs that failed in a previous run.
+        reset_urls = await self._url_repo.reset_failed()
+        for url in reset_urls:
+            await self._queue.put(url)
+        if reset_urls:
+            log.info("crawler.reset_failed", count=len(reset_urls))
+
+        count = len(reset_urls)
         for url in seed_urls:
             is_new = await self._url_repo.add_pending(url)
             if is_new:

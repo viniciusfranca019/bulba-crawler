@@ -50,5 +50,31 @@ class SqliteUrlRepository(UrlRepository):
         )
         await self._db.conn.commit()
 
+    async def reset_failed(self) -> list[str]:
+        """Reset all FAILED rows back to PENDING and clear their reason.
+
+        Returns the list of URLs that were reset so callers can re-enqueue them.
+        """
+        now = datetime.now(timezone.utc).isoformat()
+        # Fetch the URLs before updating so we can return them.
+        async with self._db.conn.execute(
+            "SELECT url FROM urls WHERE status = :failed",
+            {"failed": UrlStatus.FAILED},
+        ) as cursor:
+            rows = await cursor.fetchall()
+
+        if not rows:
+            return []
+
+        await self._db.conn.execute(
+            """
+            UPDATE urls SET status = :pending, reason = NULL, updated_at = :now
+            WHERE status = :failed
+            """,
+            {"pending": UrlStatus.PENDING, "failed": UrlStatus.FAILED, "now": now},
+        )
+        await self._db.conn.commit()
+        return [row["url"] for row in rows]
+
     async def close(self) -> None:
         """Lifecycle managed by SqliteDatabase — nothing to do here."""
