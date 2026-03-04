@@ -37,7 +37,7 @@ from typing import Any, Callable, TypeVar
 import structlog
 from selectolax.parser import HTMLParser, Node
 
-from domain.models import Ability, Evolution, PokemonData
+from domain.models import Ability, Evolution, GenderRatio, PokemonData
 from domain.ports import Parser
 
 log = structlog.get_logger(__name__)
@@ -49,6 +49,7 @@ _EVOLUTION_ANCHOR = "span#Evolution"
 _NATIONAL_DEX_HREF = "National_Pok"
 _CATEGORY_HREF = "Pok%C3%A9mon_category"
 _ABILITY_HUB_HREF = "/wiki/Ability"
+_GENDER_RATIO_HREF = "gender_ratio"
 _OG_IMAGE_SELECTOR = "meta[property='og:image']"
 
 _EVOLUTION_STAGES = (
@@ -97,6 +98,9 @@ class SelectolaxParser(Parser):
         evolution = self._safe_extract(
             "evolution", self._extract_evolution, tree, name, default=Evolution()
         )
+        gender_ratio = self._safe_extract(
+            "gender_ratio", self._extract_gender_ratio, tree, default=GenderRatio()
+        )
         image_url = self._safe_extract(
             "image_url", self._extract_image_url, tree, default=None
         )
@@ -109,6 +113,7 @@ class SelectolaxParser(Parser):
             stats=stats,
             evolution=evolution,
             abilities=abilities,
+            gender_ratio=gender_ratio,
             image_path=image_url,
         )
 
@@ -276,6 +281,57 @@ class SelectolaxParser(Parser):
             abilities.append(Ability(name=name, is_hidden=is_hidden))
 
         return abilities
+
+    def _extract_gender_ratio(self, tree: HTMLParser) -> GenderRatio:
+        """Return the gender ratio from the infobox.
+
+        Bulbapedia renders gender ratio inside the infobox as a ``<td>``
+        containing a link to ``List_of_Pokémon_by_gender_ratio``. Below it
+        is a sub-table whose visible ``<td>`` holds an ``<a>`` with ``<span>``
+        elements like ``"87.5% male"`` and ``"12.5% female"``.
+
+        Genderless Pokémon (e.g. Mewtwo) show only "Unknown" in a visible
+        ``<td>`` and return ``GenderRatio()`` (both fields None).
+        """
+        infobox = tree.css_first(_INFOBOX_SELECTOR)
+        if infobox is None:
+            return GenderRatio()
+
+        # Locate the <td> that contains the "Gender ratio" label link.
+        gender_td: Node | None = None
+        for td in infobox.css("td"):
+            if td.css_first(f"a[href*='{_GENDER_RATIO_HREF}']"):
+                gender_td = td
+                break
+
+        if gender_td is None:
+            return GenderRatio()
+
+        # Inside this <td> there is a sub-table. Walk its <td> cells to
+        # find the one with the actual percentage text (skip hidden cells).
+        male: float | None = None
+        female: float | None = None
+
+        for td in gender_td.css("td"):
+            style = td.attributes.get("style") or ""
+            if "display:none" in style.replace(" ", ""):
+                continue
+
+            text = td.text(strip=True)
+
+            m_male = re.search(r"([\d.]+)%\s*male", text)
+            m_female = re.search(r"([\d.]+)%\s*female", text)
+
+            if m_male:
+                male = float(m_male.group(1))
+            if m_female:
+                female = float(m_female.group(1))
+
+            if male is not None or female is not None:
+                return GenderRatio(male=male, female=female)
+
+        # No percentages found — genderless Pokémon.
+        return GenderRatio()
 
     def _extract_evolution(self, tree: HTMLParser, current_name: str) -> Evolution:
         """Return the direct antecessor and successor of *current_name*.

@@ -20,8 +20,8 @@ class SqliteStorage(Storage):
         now = datetime.now(timezone.utc).isoformat()
         await self._db.conn.execute(
             """
-            INSERT INTO pokemon (name, pokedex_number, category, types, stats, evolution, abilities, image_path, saved_at)
-            VALUES (:name, :pokedex_number, :category, :types, :stats, :evolution, :abilities, :image_path, :saved_at)
+            INSERT INTO pokemon (name, pokedex_number, category, types, stats, evolution, abilities, gender_ratio, image_path, saved_at)
+            VALUES (:name, :pokedex_number, :category, :types, :stats, :evolution, :abilities, :gender_ratio, :image_path, :saved_at)
             ON CONFLICT(name) DO UPDATE SET
                 pokedex_number = excluded.pokedex_number,
                 category       = excluded.category,
@@ -29,6 +29,7 @@ class SqliteStorage(Storage):
                 stats          = excluded.stats,
                 evolution      = excluded.evolution,
                 abilities      = excluded.abilities,
+                gender_ratio   = excluded.gender_ratio,
                 image_path     = excluded.image_path,
                 saved_at       = excluded.saved_at
             """,
@@ -40,6 +41,7 @@ class SqliteStorage(Storage):
                 "stats": json.dumps(data.stats),
                 "evolution": json.dumps(data.evolution.model_dump()),
                 "abilities": json.dumps([a.model_dump() for a in data.abilities]),
+                "gender_ratio": json.dumps(data.gender_ratio.model_dump()),
                 "image_path": data.image_path,
                 "saved_at": now,
             },

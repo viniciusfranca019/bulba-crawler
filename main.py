@@ -34,6 +34,8 @@ _SEED_URLS: list[str] = [
     "https://bulbapedia.bulbagarden.net/wiki/Squirtle_(Pok%C3%A9mon)",
     "https://bulbapedia.bulbagarden.net/wiki/Pikachu_(Pok%C3%A9mon)",
     "https://bulbapedia.bulbagarden.net/wiki/Mewtwo_(Pok%C3%A9mon)",
+    "https://bulbapedia.bulbagarden.net/wiki/Nidoran♂_(Pok%C3%A9mon)",
+    "https://bulbapedia.bulbagarden.net/wiki/Nidoran♀_(Pok%C3%A9mon)",
 ]
 
 _ASSETS_DIR = Path("assets")

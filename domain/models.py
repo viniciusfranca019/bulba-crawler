@@ -43,6 +43,18 @@ class Evolution(BaseModel):
     model_config = {"frozen": True}
 
 
+class GenderRatio(BaseModel):
+    """Gender ratio percentages for this Pokémon.
+
+    Both fields are None for genderless Pokémon (e.g. Mewtwo).
+    """
+
+    male: float | None = None
+    female: float | None = None
+
+    model_config = {"frozen": True}
+
+
 class PokemonData(BaseModel):
     """Parsed Pokémon information extracted from a Bulbapedia page."""
 
@@ -53,6 +65,7 @@ class PokemonData(BaseModel):
     stats: dict[str, int]
     evolution: Evolution = Field(default_factory=Evolution)
     abilities: list[Ability] = Field(default_factory=list)
+    gender_ratio: GenderRatio = Field(default_factory=GenderRatio)
     image_path: str | None = None
 
     model_config = {"frozen": True}
