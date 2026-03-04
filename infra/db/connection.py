@@ -20,12 +20,26 @@ CREATE TABLE IF NOT EXISTS urls (
 );
 
 CREATE TABLE IF NOT EXISTS pokemon (
-    name     TEXT PRIMARY KEY,
-    types    TEXT NOT NULL,
-    stats    TEXT NOT NULL,
-    saved_at TEXT NOT NULL
+    name           TEXT PRIMARY KEY,
+    pokedex_number INTEGER,
+    category       TEXT,
+    types          TEXT NOT NULL,
+    stats          TEXT NOT NULL,
+    evolution      TEXT NOT NULL DEFAULT '{}',
+    abilities      TEXT NOT NULL DEFAULT '[]',
+    saved_at       TEXT NOT NULL
 );
 """
+
+# Columns added after the initial schema. Each entry is (column, definition).
+# ALTER TABLE ignores the statement if the column already exists via the
+# try/except in _migrate(); this keeps open() idempotent.
+_MIGRATIONS: list[tuple[str, str]] = [
+    ("pokedex_number", "INTEGER"),
+    ("category", "TEXT"),
+    ("evolution", "TEXT NOT NULL DEFAULT '{}'"),
+    ("abilities", "TEXT NOT NULL DEFAULT '[]'"),
+]
 
 
 class SqliteDatabase:
@@ -42,11 +56,28 @@ class SqliteDatabase:
         return self._conn
 
     async def open(self) -> None:
-        """Open the connection and apply the DDL."""
+        """Open the connection, apply the DDL, and run column migrations."""
         self._conn = await aiosqlite.connect(self._path)
         self._conn.row_factory = aiosqlite.Row
         await self._conn.executescript(_DDL)
         await self._conn.commit()
+        await self._migrate()
+
+    async def _migrate(self) -> None:
+        """Add new columns to existing databases that predate the current schema.
+
+        SQLite does not support IF NOT EXISTS on ALTER TABLE, so we attempt
+        each ALTER and silently swallow the OperationalError raised when the
+        column already exists.
+        """
+        for column, definition in _MIGRATIONS:
+            try:
+                await self._conn.execute(  # type: ignore[union-attr]
+                    f"ALTER TABLE pokemon ADD COLUMN {column} {definition}"
+                )
+                await self._conn.commit()  # type: ignore[union-attr]
+            except aiosqlite.OperationalError:
+                pass  # column already exists — nothing to do
 
     async def close(self) -> None:
         """Flush and close the connection."""
