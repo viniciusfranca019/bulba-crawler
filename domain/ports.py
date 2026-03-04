@@ -29,39 +29,46 @@ class Parser(ABC):
     def parse(self, html: str) -> PokemonData | None:
         """Extract Pokémon data from *html*. Return ``None`` if not a Pokémon page."""
 
-    @abstractmethod
-    def extract_links(self, html: str, base_url: str) -> list[str]:
-        """Return absolute URLs of Pokémon pages found in *html*."""
-
 
 class Storage(ABC):
     """Persists Pokémon data."""
 
     @abstractmethod
     async def save(self, data: PokemonData) -> None:
-        """Append *data* to the underlying store."""
+        """Persist *data* to the underlying store."""
 
     @abstractmethod
     async def close(self) -> None:
         """Flush and release underlying resources."""
 
 
+class UrlRepository(ABC):
+    """Tracks crawl URL lifecycle to avoid re-crawling."""
+
+    @abstractmethod
+    async def add_pending(self, url: str) -> bool:
+        """Insert *url* as pending.
+
+        Returns ``True`` if the URL was new and inserted,
+        ``False`` if it was already known (any status).
+        """
+
+    @abstractmethod
+    async def mark_done(self, url: str) -> None:
+        """Mark *url* as successfully crawled."""
+
+    @abstractmethod
+    async def mark_failed(self, url: str, reason: str) -> None:
+        """Mark *url* as failed with a human-readable *reason*."""
+
+    @abstractmethod
+    async def close(self) -> None:
+        """Release underlying resources."""
+
+
 class RateLimiter(ABC):
-    """Controls the crawling rate."""
+    """Controls the crawling request rate."""
 
     @abstractmethod
     async def acquire(self) -> None:
         """Block until a request token is available."""
-
-
-class RobotsChecker(ABC):
-    """Checks robots.txt compliance."""
-
-    @abstractmethod
-    async def setup(self, fetcher: Fetcher) -> None:
-        """Fetch and parse robots.txt."""
-
-    @abstractmethod
-    def is_allowed(self, url: str) -> bool:
-        """Return ``True`` if crawling *url* is permitted."""
-
