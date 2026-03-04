@@ -71,7 +71,7 @@ def export(
     con = sqlite3.connect(db)
     con.row_factory = sqlite3.Row
     rows = con.execute(
-        "SELECT name, pokedex_number, category, types, stats, evolution, abilities, image_path, saved_at FROM pokemon ORDER BY pokedex_number, name"
+        "SELECT name, pokedex_number, category, types, stats, evolution, abilities, gender_ratio, image_path, saved_at FROM pokemon ORDER BY pokedex_number, name"
     ).fetchall()
     con.close()
 
@@ -84,6 +84,7 @@ def export(
             "stats": json.loads(row["stats"]),
             "evolution": json.loads(row["evolution"]),
             "abilities": json.loads(row["abilities"]),
+            "gender_ratio": json.loads(row["gender_ratio"]),
             "image_path": row["image_path"],
             "saved_at": row["saved_at"],
         }
