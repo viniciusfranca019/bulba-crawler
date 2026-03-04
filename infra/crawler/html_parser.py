@@ -32,11 +32,15 @@ Layout notes (verified against live pages):
 from __future__ import annotations
 
 import re
+from typing import Any, Callable, TypeVar
 
+import structlog
 from selectolax.parser import HTMLParser, Node
 
 from domain.models import Ability, Evolution, PokemonData
 from domain.ports import Parser
+
+log = structlog.get_logger(__name__)
 
 _TITLE_SELECTOR = "h1#firstHeading"
 _INFOBOX_SELECTOR = "table.roundy.infobox"
@@ -63,6 +67,8 @@ _STAT_LABELS: dict[str, str] = {
     "Speed": "speed",
 }
 
+T = TypeVar("T")
+
 
 class SelectolaxParser(Parser):
     """Implements Parser for Bulbapedia Pokémon pages using selectolax."""
@@ -78,12 +84,22 @@ class SelectolaxParser(Parser):
         if not types:
             return None
 
-        stats = self._extract_stats(tree)
-        pokedex_number = self._extract_pokedex_number(tree)
-        category = self._extract_category(tree)
-        abilities = self._extract_abilities(tree)
-        evolution = self._extract_evolution(tree, name)
-        image_url = self._extract_image_url(tree)
+        stats = self._safe_extract("stats", self._extract_stats, tree, default={})
+        pokedex_number = self._safe_extract(
+            "pokedex_number", self._extract_pokedex_number, tree, default=None
+        )
+        category = self._safe_extract(
+            "category", self._extract_category, tree, default=None
+        )
+        abilities = self._safe_extract(
+            "abilities", self._extract_abilities, tree, default=[]
+        )
+        evolution = self._safe_extract(
+            "evolution", self._extract_evolution, tree, name, default=Evolution()
+        )
+        image_url = self._safe_extract(
+            "image_url", self._extract_image_url, tree, default=None
+        )
 
         return PokemonData(
             name=name,
@@ -95,6 +111,33 @@ class SelectolaxParser(Parser):
             abilities=abilities,
             image_path=image_url,
         )
+
+    # ------------------------------------------------------------------
+    # Safe extraction wrapper
+    # ------------------------------------------------------------------
+
+    def _safe_extract(
+        self,
+        field: str,
+        extractor: Callable[..., T],
+        *args: Any,
+        default: T,
+    ) -> T:
+        """Call *extractor* with *args* and return its result.
+
+        If the extractor raises any exception, log a warning with the field
+        name and exception details and return *default* instead. This ensures
+        that a broken optional field never causes the whole page to be dropped.
+        """
+        try:
+            return extractor(*args)
+        except Exception as exc:
+            log.warning(
+                "parser.field_failed",
+                field=field,
+                reason=f"{type(exc).__name__}: {exc}",
+            )
+            return default
 
     # ------------------------------------------------------------------
     # Private helpers
@@ -258,8 +301,23 @@ class SelectolaxParser(Parser):
             label = small.text(strip=True)
             if label not in _EVOLUTION_STAGES:
                 continue
+
             # The <small> is inside a <td> inside the inner stage <table>.
-            stage_table = small.parent.parent.parent.parent  # td>tr>tbody>table
+            # Navigate up carefully: small → td → tr → tbody → table.
+            # Each step may be None if the DOM is not shaped as expected.
+            td_node = small.parent
+            if td_node is None:
+                continue
+            tr_node = td_node.parent
+            if tr_node is None:
+                continue
+            tbody_node = tr_node.parent
+            if tbody_node is None:
+                continue
+            stage_table = tbody_node.parent
+            if stage_table is None:
+                continue
+
             # Current Pokémon is a selflink; others are normal wiki links.
             self_link = stage_table.css_first("a.mw-selflink")
             wiki_links = [
