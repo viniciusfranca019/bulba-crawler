@@ -6,6 +6,8 @@ can silently skip non-target pages.
 
 Layout notes (verified against live pages):
 - The infobox is `table.roundy.infobox`.
+- Pokédex number: first <a href*="National_Pok"> whose text matches #NNNN.
+- Category: first <a href*="Pokémon_category"> in the infobox.
 - Types live inside the first <td> (no display:none) that contains
   `a[href*="_(type)"]` links. The Unknown type href is skipped — it is a
   catch-all redirect used for alternate forms, not a real type.
@@ -13,18 +15,40 @@ Layout notes (verified against live pages):
   inner `<span>` has id="Base_stats". Each stat row has a single `<th>`
   whose text is "StatName: VALUE" (label and number in the same cell,
   separated by a colon).
+- Abilities: the infobox <td> that contains an <a href="/wiki/Ability">.
+  Visible <td> cells inside it carry one ability link each. A <small> sibling
+  containing "Hidden Ability" marks that ability as hidden. Cells with
+  display:none are alternate-form abilities and are skipped.
+- Evolution: the <div> that immediately follows <span#Evolution>'s parent
+  <h3>. Each stage is a nested <table> labelled by a <small> element
+  ("Unevolved", "First Evolution", …). The current Pokémon's stage is
+  identified by an <a class="mw-selflink"> link; antecessor and successor
+  are the adjacent stages.
 """
 
 from __future__ import annotations
 
+import re
+
 from selectolax.parser import HTMLParser, Node
 
-from domain.models import PokemonData
+from domain.models import Ability, Evolution, PokemonData
 from domain.ports import Parser
 
 _TITLE_SELECTOR = "h1#firstHeading"
 _INFOBOX_SELECTOR = "table.roundy.infobox"
 _BASE_STATS_ANCHOR = "span#Base_stats"
+_EVOLUTION_ANCHOR = "span#Evolution"
+_NATIONAL_DEX_HREF = "National_Pok"
+_CATEGORY_HREF = "Pok%C3%A9mon_category"
+_ABILITY_HUB_HREF = "/wiki/Ability"
+
+_EVOLUTION_STAGES = (
+    "Unevolved",
+    "First Evolution",
+    "Second Evolution",
+    "Third Evolution",
+)
 
 _STAT_LABELS: dict[str, str] = {
     "HP": "hp",
@@ -51,8 +75,20 @@ class SelectolaxParser(Parser):
             return None
 
         stats = self._extract_stats(tree)
+        pokedex_number = self._extract_pokedex_number(tree)
+        category = self._extract_category(tree)
+        abilities = self._extract_abilities(tree)
+        evolution = self._extract_evolution(tree, name)
 
-        return PokemonData(name=name, types=types, stats=stats)
+        return PokemonData(
+            name=name,
+            pokedex_number=pokedex_number,
+            category=category,
+            types=types,
+            stats=stats,
+            evolution=evolution,
+            abilities=abilities,
+        )
 
     # ------------------------------------------------------------------
     # Private helpers
@@ -121,13 +157,145 @@ class SelectolaxParser(Parser):
 
         return stats
 
+    def _extract_pokedex_number(self, tree: HTMLParser) -> int | None:
+        """Return the National Pokédex number as an integer (e.g. 1 for Bulbasaur).
+
+        Bulbapedia renders it as an <a href*="National_Pok..."> whose visible
+        text is "#NNNN". We strip the leading '#' and cast to int.
+        """
+        for a in tree.css(f"a[href*='{_NATIONAL_DEX_HREF}']"):
+            text = a.text(strip=True)
+            if re.match(r"^#\d+$", text):
+                return int(text[1:])
+        return None
+
+    def _extract_category(self, tree: HTMLParser) -> str | None:
+        """Return the Pokémon category / species string (e.g. "Seed Pokémon").
+
+        The category is linked via <a href*="Pokémon_category"> inside the
+        infobox.
+        """
+        node = tree.css_first(f"a[href*='{_CATEGORY_HREF}']")
+        if node is None:
+            return None
+        text = node.text(strip=True)
+        return text or None
+
+    def _extract_abilities(self, tree: HTMLParser) -> list[Ability]:
+        """Return visible abilities from the infobox abilities sub-table.
+
+        The abilities block is the infobox <td> that contains a link to
+        /wiki/Ability. Inside it, each visible <td> (no display:none) holds
+        one ability link. A <small> child whose text contains "Hidden Ability"
+        marks that entry as a hidden ability. Alternate-form abilities in
+        hidden cells are skipped entirely.
+        """
+        infobox = tree.css_first(_INFOBOX_SELECTOR)
+        if infobox is None:
+            return []
+
+        # Locate the outer <td> that acts as the abilities container.
+        abilities_container: Node | None = None
+        for td in infobox.css("td"):
+            if td.css_first(f"a[href='{_ABILITY_HUB_HREF}']"):
+                abilities_container = td
+                break
+
+        if abilities_container is None:
+            return []
+
+        abilities: list[Ability] = []
+        seen: set[str] = set()
+
+        for td in abilities_container.css("td"):
+            style = td.attributes.get("style") or ""
+            if "display:none" in style.replace(" ", ""):
+                continue
+
+            ability_link = td.css_first("a[href*='_(Ability)']")
+            if ability_link is None:
+                continue
+
+            name = ability_link.text(strip=True)
+            if not name or name in seen:
+                continue
+
+            small = td.css_first("small")
+            is_hidden = bool(small and "Hidden Ability" in small.text())
+
+            seen.add(name)
+            abilities.append(Ability(name=name, is_hidden=is_hidden))
+
+        return abilities
+
+    def _extract_evolution(self, tree: HTMLParser, current_name: str) -> Evolution:
+        """Return the direct antecessor and successor of *current_name*.
+
+        Bulbapedia renders the evolution chain as a <div> of nested tables
+        immediately after the <h3> containing <span#Evolution>. Each stage
+        table is labelled by a <small> element ("Unevolved", "First Evolution",
+        …). The current Pokémon is identified by a <a class="mw-selflink">.
+        Antecessor and successor are the stages immediately before and after.
+        """
+        anchor = tree.css_first(_EVOLUTION_ANCHOR)
+        if anchor is None:
+            return Evolution()
+
+        # Walk forward from the parent <h3> to find the first <div>.
+        evo_div = self._next_sibling_tag(anchor.parent, "div")
+        if evo_div is None:
+            return Evolution()
+
+        # Build an ordered map of stage label → Pokémon name.
+        chain: dict[str, str] = {}
+        for small in evo_div.css("small"):
+            label = small.text(strip=True)
+            if label not in _EVOLUTION_STAGES:
+                continue
+            # The <small> is inside a <td> inside the inner stage <table>.
+            stage_table = small.parent.parent.parent.parent  # td>tr>tbody>table
+            # Current Pokémon is a selflink; others are normal wiki links.
+            self_link = stage_table.css_first("a.mw-selflink")
+            wiki_links = [
+                a
+                for a in stage_table.css("a")
+                if "_(Pok" in (a.attributes.get("href") or "")
+            ]
+            if self_link:
+                chain[label] = self_link.text(strip=True)
+            elif wiki_links:
+                chain[label] = wiki_links[0].text(strip=True)
+
+        # Determine which stage the current Pokémon occupies.
+        current_stage: str | None = None
+        for stage, name in chain.items():
+            if name == current_name:
+                current_stage = stage
+                break
+
+        if current_stage is None:
+            return Evolution()
+
+        idx = _EVOLUTION_STAGES.index(current_stage)
+        antecessor = chain.get(_EVOLUTION_STAGES[idx - 1]) if idx > 0 else None
+        successor = (
+            chain.get(_EVOLUTION_STAGES[idx + 1])
+            if idx < len(_EVOLUTION_STAGES) - 1
+            else None
+        )
+        return Evolution(antecessor=antecessor, successor=successor)
+
     def _next_sibling_table(self, node: Node | None) -> Node | None:
         """Return the first <table> sibling after *node*."""
+        return self._next_sibling_tag(node, "table")
+
+    def _next_sibling_tag(self, node: Node | None, tag: str) -> Node | None:
+        """Return the first sibling of *node* whose tag matches *tag*."""
         if node is None:
             return None
         current = node.next
         while current is not None:
-            if current.tag == "table":
+            if current.tag == tag:
                 return current
             current = current.next
         return None
