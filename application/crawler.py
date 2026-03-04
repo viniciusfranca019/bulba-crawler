@@ -7,11 +7,19 @@ It has no knowledge of httpx, aiosqlite, or any other concrete adapter.
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 
 import structlog
 
-from domain.models import CrawlUrl
-from domain.ports import Fetcher, Parser, RateLimiter, Storage, UrlRepository
+from domain.models import CrawlUrl, PokemonData
+from domain.ports import (
+    Fetcher,
+    ImageDownloader,
+    Parser,
+    RateLimiter,
+    Storage,
+    UrlRepository,
+)
 
 log = structlog.get_logger(__name__)
 
@@ -37,12 +45,16 @@ class CrawlerService:
         storage: Storage,
         url_repo: UrlRepository,
         rate_limiter: RateLimiter,
+        image_downloader: ImageDownloader | None = None,
+        assets_dir: Path | None = None,
     ) -> None:
         self._fetcher = fetcher
         self._parser = parser
         self._storage = storage
         self._url_repo = url_repo
         self._rate_limiter = rate_limiter
+        self._image_downloader = image_downloader
+        self._assets_dir = assets_dir
         self._queue: asyncio.Queue[str] = asyncio.Queue()
 
     async def run(self, seed_urls: list[str]) -> None:
@@ -100,6 +112,7 @@ class CrawlerService:
             data = self._parser.parse(html)
 
             if data is not None:
+                data = await self._download_image(data, worker_id)
                 await self._storage.save(data)
                 log.info("worker.saved", worker=worker_id, pokemon=data.name)
             else:
@@ -111,3 +124,38 @@ class CrawlerService:
             reason = f"{type(exc).__name__}: {exc}"
             log.warning("worker.failed", worker=worker_id, url=url, reason=reason)
             await self._url_repo.mark_failed(url, reason)
+
+    async def _download_image(self, data: PokemonData, worker_id: int) -> PokemonData:
+        """Download the Pokémon image and return a new PokemonData with the
+        local relative path stored in image_path.
+
+        If no image_downloader or assets_dir is configured, or if the parsed
+        data carries no image URL, returns data unchanged.
+        """
+        if (
+            self._image_downloader is None
+            or self._assets_dir is None
+            or data.image_path is None
+        ):
+            return data
+
+        image_url = data.image_path
+        # Derive a clean filename from the URL's last path segment.
+        filename = Path(image_url.split("?")[0]).name
+        dest = self._assets_dir / filename
+        local_path = str(dest)
+
+        try:
+            await self._image_downloader.download(image_url, dest)
+            log.info("worker.image_saved", worker=worker_id, path=local_path)
+        except Exception as exc:
+            log.warning(
+                "worker.image_failed",
+                worker=worker_id,
+                url=image_url,
+                reason=f"{type(exc).__name__}: {exc}",
+            )
+            # Keep image_path as None so the record is still saved without it.
+            return data.model_copy(update={"image_path": None})
+
+        return data.model_copy(update={"image_path": local_path})

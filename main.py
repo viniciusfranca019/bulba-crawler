@@ -15,6 +15,7 @@ import uvloop
 from application.crawler import CrawlerService
 from infra.crawler.html_parser import SelectolaxParser
 from infra.crawler.http_fetcher import HttpxFetcher
+from infra.crawler.image_downloader import HttpxImageDownloader
 from infra.crawler.rate_limiter import AiolimiterRateLimiter
 from infra.db.connection import SqliteDatabase
 from infra.db.sqlite_storage import SqliteStorage
@@ -35,11 +36,14 @@ _SEED_URLS: list[str] = [
     "https://bulbapedia.bulbagarden.net/wiki/Mewtwo_(Pok%C3%A9mon)",
 ]
 
+_ASSETS_DIR = Path("assets")
+
 
 @app.command()
 def crawl(
     db: str = typer.Option("crawl.db", help="Path to the SQLite database file."),
     rate: float = typer.Option(2.0, help="Maximum requests per second."),
+    assets_dir: str = typer.Option("assets", help="Directory to save Pokémon images."),
 ) -> None:
     """Crawl Bulbapedia Pokémon pages and store results in SQLite."""
     structlog.configure(
@@ -48,7 +52,7 @@ def crawl(
             structlog.dev.ConsoleRenderer(),
         ]
     )
-    asyncio.run(_run(db_path=db, rate=rate))
+    asyncio.run(_run(db_path=db, rate=rate, assets_dir=Path(assets_dir)))
 
 
 @app.command()
@@ -65,7 +69,7 @@ def export(
     con = sqlite3.connect(db)
     con.row_factory = sqlite3.Row
     rows = con.execute(
-        "SELECT name, pokedex_number, category, types, stats, evolution, abilities, saved_at FROM pokemon ORDER BY pokedex_number, name"
+        "SELECT name, pokedex_number, category, types, stats, evolution, abilities, image_path, saved_at FROM pokemon ORDER BY pokedex_number, name"
     ).fetchall()
     con.close()
 
@@ -78,6 +82,7 @@ def export(
             "stats": json.loads(row["stats"]),
             "evolution": json.loads(row["evolution"]),
             "abilities": json.loads(row["abilities"]),
+            "image_path": row["image_path"],
             "saved_at": row["saved_at"],
         }
         for row in rows
@@ -92,7 +97,9 @@ def export(
         typer.echo(f"Exported {len(pokemon_list)} Pokémon to {output}")
 
 
-async def _run(db_path: str, rate: float) -> None:
+async def _run(db_path: str, rate: float, assets_dir: Path) -> None:
+    assets_dir.mkdir(parents=True, exist_ok=True)
+
     database = SqliteDatabase(db_path)
     await database.open()
 
@@ -101,6 +108,7 @@ async def _run(db_path: str, rate: float) -> None:
     storage = SqliteStorage(database)
     url_repo = SqliteUrlRepository(database)
     rate_limiter = AiolimiterRateLimiter(rate=rate)
+    image_downloader = HttpxImageDownloader()
 
     service = CrawlerService(
         fetcher=fetcher,
@@ -108,12 +116,15 @@ async def _run(db_path: str, rate: float) -> None:
         storage=storage,
         url_repo=url_repo,
         rate_limiter=rate_limiter,
+        image_downloader=image_downloader,
+        assets_dir=assets_dir,
     )
 
     try:
         await service.run(seed_urls=_SEED_URLS)
     finally:
         await fetcher.close()
+        await image_downloader.close()
         await database.close()
 
 

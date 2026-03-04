@@ -53,5 +53,6 @@ class PokemonData(BaseModel):
     stats: dict[str, int]
     evolution: Evolution = Field(default_factory=Evolution)
     abilities: list[Ability] = Field(default_factory=list)
+    image_path: str | None = None
 
     model_config = {"frozen": True}

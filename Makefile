@@ -10,8 +10,9 @@ install-all: ## Install all dependency groups (production + dev)
 	uv sync --all-groups
 	@echo "✅ All dependencies installed successfully!"
 
-clean: ## Remove the SQLite database file
+clean: ## Remove the SQLite database file and downloaded assets
 	rm -f crawl.db
+	rm -rf assets/
 
 crawl: ## Crawl Bulbapedia Pokémon pages and store results in SQLite
 	uv run python main.py crawl

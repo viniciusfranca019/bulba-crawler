@@ -39,6 +39,7 @@ _MIGRATIONS: list[tuple[str, str]] = [
     ("category", "TEXT"),
     ("evolution", "TEXT NOT NULL DEFAULT '{}'"),
     ("abilities", "TEXT NOT NULL DEFAULT '[]'"),
+    ("image_path", "TEXT"),
 ]
 
 

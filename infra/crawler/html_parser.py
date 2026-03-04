@@ -24,6 +24,9 @@ Layout notes (verified against live pages):
   ("Unevolved", "First Evolution", …). The current Pokémon's stage is
   identified by an <a class="mw-selflink"> link; antecessor and successor
   are the adjacent stages.
+- Image URL: extracted from the first `<meta property="og:image">` tag in
+  the document head. Bulbapedia sets this to the full-resolution PNG of the
+  Pokémon's official artwork.
 """
 
 from __future__ import annotations
@@ -42,6 +45,7 @@ _EVOLUTION_ANCHOR = "span#Evolution"
 _NATIONAL_DEX_HREF = "National_Pok"
 _CATEGORY_HREF = "Pok%C3%A9mon_category"
 _ABILITY_HUB_HREF = "/wiki/Ability"
+_OG_IMAGE_SELECTOR = "meta[property='og:image']"
 
 _EVOLUTION_STAGES = (
     "Unevolved",
@@ -79,6 +83,7 @@ class SelectolaxParser(Parser):
         category = self._extract_category(tree)
         abilities = self._extract_abilities(tree)
         evolution = self._extract_evolution(tree, name)
+        image_url = self._extract_image_url(tree)
 
         return PokemonData(
             name=name,
@@ -88,6 +93,7 @@ class SelectolaxParser(Parser):
             stats=stats,
             evolution=evolution,
             abilities=abilities,
+            image_path=image_url,
         )
 
     # ------------------------------------------------------------------
@@ -284,6 +290,18 @@ class SelectolaxParser(Parser):
             else None
         )
         return Evolution(antecessor=antecessor, successor=successor)
+
+    def _extract_image_url(self, tree: HTMLParser) -> str | None:
+        """Return the full-resolution image URL from the og:image meta tag.
+
+        Bulbapedia sets the first `<meta property="og:image">` to the
+        official artwork PNG for the Pokémon's default form, e.g.:
+        https://archives.bulbagarden.net/media/upload/thumb/4/4a/0025Pikachu.png/1200px-0025Pikachu.png
+        """
+        node = tree.css_first(_OG_IMAGE_SELECTOR)
+        if node is None:
+            return None
+        return node.attributes.get("content") or None
 
     def _next_sibling_table(self, node: Node | None) -> Node | None:
         """Return the first <table> sibling after *node*."""

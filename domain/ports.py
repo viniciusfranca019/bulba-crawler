@@ -1,11 +1,12 @@
 """Port interfaces (ABCs) — define contracts for infrastructure adapters.
 
-This module imports ONLY from `abc` and `domain.models`. No I/O allowed.
+This module imports ONLY from `abc`, `pathlib`, and `domain.models`. No I/O allowed.
 """
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from pathlib import Path
 
 from domain.models import CrawlUrl, PokemonData
 
@@ -72,3 +73,15 @@ class RateLimiter(ABC):
     @abstractmethod
     async def acquire(self) -> None:
         """Block until a request token is available."""
+
+
+class ImageDownloader(ABC):
+    """Downloads and saves a remote image to a local path."""
+
+    @abstractmethod
+    async def download(self, url: str, dest: Path) -> None:
+        """Fetch the image at *url* and write it to *dest*.
+
+        Creates any missing parent directories. Skips the download if
+        *dest* already exists (idempotent re-run behaviour).
+        """
