@@ -3,23 +3,28 @@
 Selectors target the Bulbapedia MediaWiki layout. The parse() method returns
 None for any page that does not look like a Pokémon species article so workers
 can silently skip non-target pages.
+
+Layout notes (verified against live pages):
+- The infobox is `table.roundy.infobox`.
+- Types live inside the first <td> (no display:none) that contains
+  `a[href*="_(type)"]` links. The Unknown type href is skipped — it is a
+  catch-all redirect used for alternate forms, not a real type.
+- Base stats are in the table that immediately follows the `<h4>` whose
+  inner `<span>` has id="Base_stats". Each stat row has a single `<th>`
+  whose text is "StatName: VALUE" (label and number in the same cell,
+  separated by a colon).
 """
 
 from __future__ import annotations
 
-from selectolax.parser import HTMLParser
+from selectolax.parser import HTMLParser, Node
 
 from domain.models import PokemonData
 from domain.ports import Parser
 
-# Bulbapedia renders the Pokémon infobox with this class.
-_INFOBOX_SELECTOR = "table.roundy"
-# The page title h1 contains the Pokémon name.
 _TITLE_SELECTOR = "h1#firstHeading"
-# Type cells sit inside the infobox and link to type articles.
-_TYPE_SELECTOR = "a[href*='_(type)'] span"
-# Base-stats table rows: each <tr> has a <th> label and the first <td> value.
-_STAT_ROW_SELECTOR = "table.roundy tr"
+_INFOBOX_SELECTOR = "table.roundy.infobox"
+_BASE_STATS_ANCHOR = "span#Base_stats"
 
 _STAT_LABELS: dict[str, str] = {
     "HP": "hp",
@@ -57,29 +62,72 @@ class SelectolaxParser(Parser):
         node = tree.css_first(_TITLE_SELECTOR)
         if node is None:
             return None
-        # Strip the "(Pokémon)" suffix that Bulbapedia appends.
         raw = node.text(strip=True)
+        # Bulbapedia appends "(Pokémon)" to species page titles.
         return raw.replace("(Pokémon)", "").strip() or None
 
     def _extract_types(self, tree: HTMLParser) -> list[str]:
-        seen: list[str] = []
-        for node in tree.css(_TYPE_SELECTOR):
-            label = node.text(strip=True)
-            if label and label not in seen:
-                seen.append(label)
-        return seen
+        infobox = tree.css_first(_INFOBOX_SELECTOR)
+        if infobox is None:
+            return []
+
+        # Walk every <td> in the infobox and take the first one that:
+        #   1. is not hidden (no "display:none" in its inline style), and
+        #   2. contains at least one type link that is not Unknown.
+        for td in infobox.css("td"):
+            style = td.attributes.get("style") or ""
+            if "display:none" in style.replace(" ", ""):
+                continue
+
+            types: list[str] = []
+            for a in td.css("a[href*='_(type)']"):
+                href = a.attributes.get("href") or ""
+                # Unknown_(type) is a redirect used for hidden/alternate forms.
+                if "Unknown" in href:
+                    continue
+                label = a.text(strip=True)
+                if label and label not in types:
+                    types.append(label)
+
+            if types:
+                return types
+
+        return []
 
     def _extract_stats(self, tree: HTMLParser) -> dict[str, int]:
+        anchor = tree.css_first(_BASE_STATS_ANCHOR)
+        if anchor is None:
+            return {}
+
+        # The anchor is a <span> inside an <h4>. Walk forward from the <h4>
+        # to find the immediately following <table>.
+        stats_table = self._next_sibling_table(anchor.parent)
+        if stats_table is None:
+            return {}
+
         stats: dict[str, int] = {}
-        for row in tree.css(_STAT_ROW_SELECTOR):
-            cells = row.css("th, td")
-            if len(cells) < 2:
+        for th in stats_table.css("th"):
+            text = th.text(strip=True)
+            if ":" not in text:
                 continue
-            label = cells[0].text(strip=True)
-            key = _STAT_LABELS.get(label)
+            # Format is "StatName: VALUE" — both in the same <th>.
+            label, _, raw_value = text.partition(":")
+            key = _STAT_LABELS.get(label.strip())
             if key is None:
                 continue
-            raw_value = cells[1].text(strip=True)
-            if raw_value.isdigit():
-                stats[key] = int(raw_value)
+            value = raw_value.strip()
+            if value.isdigit():
+                stats[key] = int(value)
+
         return stats
+
+    def _next_sibling_table(self, node: Node | None) -> Node | None:
+        """Return the first <table> sibling after *node*."""
+        if node is None:
+            return None
+        current = node.next
+        while current is not None:
+            if current.tag == "table":
+                return current
+            current = current.next
+        return None
