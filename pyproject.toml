@@ -12,6 +12,7 @@ dependencies = [
     "pydantic>=2.12.5",
     "selectolax>=0.4.6",
     "structlog>=25.5.0",
+    "tenacity>=9.0.0",
     "typer[all]>=0.24.1",
     "uvloop>=0.22.1",
 ]
