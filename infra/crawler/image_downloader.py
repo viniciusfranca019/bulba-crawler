@@ -12,6 +12,7 @@ import aiofiles
 import httpx
 
 from domain.ports import ImageDownloader
+from infra.crawler._retry import http_retry
 
 _HEADERS = {
     "User-Agent": (
@@ -36,6 +37,7 @@ class HttpxImageDownloader(ImageDownloader):
             follow_redirects=True,
         )
 
+    @http_retry(max_attempts=2)
     async def download(self, url: str, dest: Path) -> None:
         """Fetch the image at *url* and write it to *dest*.
 

@@ -6,6 +6,7 @@ import httpx
 
 from domain.models import CrawlUrl
 from domain.ports import Fetcher
+from infra.crawler._retry import http_retry
 
 _HEADERS = {
     "User-Agent": (
@@ -25,6 +26,7 @@ class HttpxFetcher(Fetcher):
             follow_redirects=True,
         )
 
+    @http_retry(max_attempts=3)
     async def fetch(self, crawl_url: CrawlUrl) -> str:
         response = await self._client.get(crawl_url.url)
         response.raise_for_status()
