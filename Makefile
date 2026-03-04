@@ -1,4 +1,4 @@
-.PHONY: help install-all test lint format
+.PHONY: help install-all test lint format crawl dump
 
 
 help: ## Mostrar esta mensagem de ajuda
@@ -9,6 +9,12 @@ install-all: ## Install all dependency groups (production + dev)
 	@echo "📦 Installing all dependencies (production + dev)..."
 	uv sync --all-groups
 	@echo "✅ All dependencies installed successfully!"
+
+crawl: ## Crawl Bulbapedia Pokémon pages and store results in SQLite
+	uv run python main.py crawl
+
+dump: ## Export crawled Pokémon data to pokemon.json
+	uv run python main.py export --output pokemon.json
 
 lint: ## Lint code
 	uv run ruff check . --fix

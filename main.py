@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import sqlite3
+import sys
+from pathlib import Path
 
 import structlog
 import typer
@@ -20,7 +24,7 @@ from infra.db.sqlite_url_repo import SqliteUrlRepository
 # is created. This replaces the default selector-based loop with libuv.
 uvloop.install()
 
-app = typer.Typer(add_completion=False)
+app = typer.Typer(add_completion=False, help="Bulbapedia Pokémon crawler.")
 
 # A small fixed list of Bulbapedia Pokémon pages to crawl.
 _SEED_URLS: list[str] = [
@@ -45,6 +49,43 @@ def crawl(
         ]
     )
     asyncio.run(_run(db_path=db, rate=rate))
+
+
+@app.command()
+def export(
+    db: str = typer.Option("crawl.db", help="Path to the SQLite database file."),
+    output: str = typer.Option("-", help="Output file path. Use '-' for stdout."),
+) -> None:
+    """Export crawled Pokémon data from SQLite to JSON."""
+    db_path = Path(db)
+    if not db_path.exists():
+        typer.echo(f"Database not found: {db}", err=True)
+        raise typer.Exit(code=1)
+
+    con = sqlite3.connect(db)
+    con.row_factory = sqlite3.Row
+    rows = con.execute(
+        "SELECT name, types, stats, saved_at FROM pokemon ORDER BY name"
+    ).fetchall()
+    con.close()
+
+    pokemon_list = [
+        {
+            "name": row["name"],
+            "types": json.loads(row["types"]),
+            "stats": json.loads(row["stats"]),
+            "saved_at": row["saved_at"],
+        }
+        for row in rows
+    ]
+
+    result = json.dumps(pokemon_list, indent=2, ensure_ascii=False)
+
+    if output == "-":
+        sys.stdout.write(result + "\n")
+    else:
+        Path(output).write_text(result + "\n", encoding="utf-8")
+        typer.echo(f"Exported {len(pokemon_list)} Pokémon to {output}")
 
 
 async def _run(db_path: str, rate: float) -> None:

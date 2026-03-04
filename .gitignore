@@ -11,3 +11,4 @@ wheels/
 .venv
 
 crawl.db
+pokemon.json
